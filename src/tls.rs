@@ -66,6 +66,7 @@ pub(crate) struct TlsConfigBuilder {
     key: Box<dyn Read + Send + Sync>,
     client_auth: TlsClientAuth,
     ocsp_resp: Vec<u8>,
+    preconfigured_tls: Option<ServerConfig>,
 }
 
 impl fmt::Debug for TlsConfigBuilder {
@@ -82,7 +83,13 @@ impl TlsConfigBuilder {
             cert: Box::new(io::empty()),
             client_auth: TlsClientAuth::Off,
             ocsp_resp: Vec::new(),
+            preconfigured_tls: None,
         }
+    }
+
+    pub(crate) fn preconfigured_tls(mut self, config: ServerConfig) -> Self {
+        self.preconfigured_tls = Some(config);
+        self
     }
 
     /// sets the Tls key via File Path, returns `TlsConfigError::IoError` if the file cannot be open
@@ -168,6 +175,14 @@ impl TlsConfigBuilder {
     }
 
     pub(crate) fn build(mut self) -> Result<ServerConfig, TlsConfigError> {
+        let alpn_protocols = vec!["h2".into(), "http/1.1".into()];
+
+        if let Some(mut config) = self.preconfigured_tls.take() {
+            // ensure the config uses the correct ALPN protocols
+            config.alpn_protocols = alpn_protocols;
+            return Ok(config);
+        }
+
         let mut cert_rdr = BufReader::new(self.cert);
         let cert = rustls_pemfile::certs(&mut cert_rdr)
             .map_err(|_e| TlsConfigError::CertParseError)?
@@ -235,7 +250,7 @@ impl TlsConfigBuilder {
             .with_client_cert_verifier(client_auth.into())
             .with_single_cert_with_ocsp_and_sct(cert, key, self.ocsp_resp, Vec::new())
             .map_err(TlsConfigError::InvalidKey)?;
-        config.alpn_protocols = vec!["h2".into(), "http/1.1".into()];
+        config.alpn_protocols = alpn_protocols;
         Ok(config)
     }
 }
