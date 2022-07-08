@@ -498,6 +498,16 @@ where
         self.with_tls(|tls| tls.ocsp_resp(resp.as_ref()))
     }
 
+    /// Use a preconfigured rustls TLS configuration.
+    ///
+    /// Useful for more sophisticated scenarios, where the server wants specific
+    /// ciphersuites or uses a non-standard cert resolver/client cert verifier.
+    ///
+    /// *This function requires the `"tls"` feature.*
+    pub fn preconfigured_tls(self, config: tokio_rustls::rustls::ServerConfig) -> Self {
+        self.with_tls(|tls| tls.preconfigured_tls(config))
+    }
+
     fn with_tls<Func>(self, func: Func) -> Self
     where
         Func: FnOnce(TlsConfigBuilder) -> TlsConfigBuilder,
