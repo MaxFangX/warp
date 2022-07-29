@@ -23,6 +23,7 @@ pub mod query;
 pub mod reply;
 pub mod sse;
 pub mod trace;
+pub mod upgrade;
 #[cfg(feature = "websocket")]
 pub mod ws;
 
