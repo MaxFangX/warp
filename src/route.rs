@@ -2,6 +2,7 @@ use scoped_tls::scoped_thread_local;
 use std::cell::RefCell;
 use std::mem;
 use std::net::SocketAddr;
+use std::time::Instant;
 
 use hyper::Body;
 
@@ -33,6 +34,7 @@ pub(crate) struct Route {
     remote_addr: Option<SocketAddr>,
     req: Request,
     segments_index: usize,
+    request_start: Instant,
 }
 
 #[derive(Debug)]
@@ -55,7 +57,12 @@ impl Route {
             remote_addr,
             req,
             segments_index,
+            request_start: Instant::now(),
         })
+    }
+
+    pub(crate) fn request_start(&self) -> Instant {
+        self.request_start
     }
 
     pub(crate) fn method(&self) -> &http::Method {

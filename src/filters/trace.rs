@@ -167,6 +167,11 @@ impl<'a> Info<'a> {
         self.route.method()
     }
 
+    /// View the `http::Uri` of the request.
+    pub fn uri(&self) -> &http::Uri {
+        self.route.uri()
+    }
+
     /// View the URI path of the request.
     pub fn path(&self) -> &str {
         self.route.full_path()
@@ -243,33 +248,54 @@ mod internal {
             Err(error) => (error.status(), Some(error)),
         };
 
+        // phlip9: extract the request_start time and compute the total elapsed
+        // request time.
+        //
+        // What the request time measures:
+        // (+) includes time this request spent in the warp router and user
+        //     handlers.
+        // (-) doesn't include time this request spent in hyper nor time spent
+        //     moving through the network.
+        let time = route::with(|route| route.request_start().elapsed());
+
+        // phlip9: use `target: http` to match our internal target.
+        // this makes logs more readable and reduces targets needed to filter
+        // request logs.
         if status.is_success() {
             tracing::info!(
-                target: "warp::filters::trace",
+                target: "http",
+                // target: "warp::filters::trace",
                 status = status.as_u16(),
-                "finished processing with success"
+                ?time,
+                "done (success)"
             );
         } else if status.is_server_error() {
             tracing::error!(
-                target: "warp::filters::trace",
+                target: "http",
+                // target: "warp::filters::trace",
                 status = status.as_u16(),
+                ?time,
                 error = ?error,
-                "unable to process request (internal error)"
+                "done (internal error)"
             );
         } else if status.is_client_error() {
             tracing::warn!(
-                target: "warp::filters::trace",
+                target: "http",
+                // target: "warp::filters::trace",
                 status = status.as_u16(),
+                ?time,
                 error = ?error,
-                "unable to serve request (client error)"
+                "done (client error)"
             );
         } else {
             // Either informational or redirect
             tracing::info!(
-                target: "warp::filters::trace",
+                target: "http",
+                // target: "warp::filters::trace",
                 status = status.as_u16(),
+                ?time,
                 error = ?error,
-                    "finished processing with status"
+                "done (redirect)"
             );
         }
     }
@@ -298,7 +324,8 @@ mod internal {
             let span = route::with(|route| (self.trace.func)(Info { route }));
             let _entered = span.enter();
 
-            tracing::info!(target: "warp::filters::trace", "processing request");
+            tracing::debug!(target: "http", "new request");
+
             self.filter
                 .filter(Internal)
                 .map_ok(convert_reply as fn(F::Extract) -> Self::Extract)
