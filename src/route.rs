@@ -57,7 +57,7 @@ impl Route {
             remote_addr,
             req,
             segments_index,
-            request_start: Instant::now(),
+            request_start: tokio::time::Instant::now().into_std(),
         })
     }
 

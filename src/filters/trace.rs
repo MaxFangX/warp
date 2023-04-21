@@ -217,20 +217,11 @@ mod internal {
 
     use super::{Info, Trace};
     use crate::filter::{Filter, FilterBase, Internal};
+    use crate::http::Response;
+    use crate::hyper::Body;
     use crate::reject::IsReject;
     use crate::reply::Reply;
-    use crate::reply::Response;
     use crate::route;
-
-    #[allow(missing_debug_implementations)]
-    pub struct Traced(pub(super) Response);
-
-    impl Reply for Traced {
-        #[inline]
-        fn into_response(self) -> Response {
-            self.0
-        }
-    }
 
     #[allow(missing_debug_implementations)]
     #[derive(Clone, Copy)]
@@ -242,9 +233,9 @@ mod internal {
     use tracing::instrument::{Instrument, Instrumented};
     use tracing::Span;
 
-    fn finished_logger<E: IsReject>(reply: &Result<(Traced,), E>) {
+    fn finished_logger<E: IsReject>(reply: &Result<(Response<Body>,), E>) {
         let (status, error) = match reply {
-            Ok((Traced(resp),)) => (resp.status(), None),
+            Ok((resp,)) => (resp.status(), None),
             Err(error) => (error.status(), Some(error)),
         };
 
@@ -276,7 +267,7 @@ mod internal {
                 status = status.as_u16(),
                 ?time,
                 error = ?error,
-                "done (internal error)"
+                "done (server error)"
             );
         } else if status.is_client_error() {
             tracing::warn!(
@@ -300,8 +291,8 @@ mod internal {
         }
     }
 
-    fn convert_reply<R: Reply>(reply: R) -> (Traced,) {
-        (Traced(reply.into_response()),)
+    fn convert_reply<R: Reply>(reply: R) -> (Response<Body>,) {
+        (reply.into_response(),)
     }
 
     impl<FN, F> FilterBase for WithTrace<FN, F>
@@ -311,7 +302,7 @@ mod internal {
         F::Extract: Reply,
         F::Error: IsReject,
     {
-        type Extract = (Traced,);
+        type Extract = (Response<Body>,);
         type Error = F::Error;
         type Future = Instrumented<
             Inspect<
