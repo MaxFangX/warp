@@ -258,7 +258,7 @@ mod internal {
                 // target: "warp::filters::trace",
                 status = status.as_u16(),
                 ?time,
-                "done (success)"
+                "Handled (success)"
             );
         } else if status.is_server_error() {
             tracing::error!(
@@ -267,7 +267,7 @@ mod internal {
                 status = status.as_u16(),
                 ?time,
                 error = ?error,
-                "done (server error)"
+                "Handled (srv-err)"
             );
         } else if status.is_client_error() {
             tracing::warn!(
@@ -276,7 +276,7 @@ mod internal {
                 status = status.as_u16(),
                 ?time,
                 error = ?error,
-                "done (client error)"
+                "Handled (cli-err)"
             );
         } else {
             // Either informational or redirect
@@ -286,7 +286,7 @@ mod internal {
                 status = status.as_u16(),
                 ?time,
                 error = ?error,
-                "done (redirect)"
+                "Handled (redirect)"
             );
         }
     }
@@ -315,7 +315,7 @@ mod internal {
             let span = route::with(|route| (self.trace.func)(Info { route }));
             let _entered = span.enter();
 
-            tracing::debug!(target: "http", "new request");
+            tracing::debug!(target: "http", "New (inbound) Handling new request");
 
             self.filter
                 .filter(Internal)
