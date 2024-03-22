@@ -15,8 +15,10 @@ use hyper::server::conn::{AddrIncoming, AddrStream};
 
 use crate::transport::Transport;
 use tokio_rustls::rustls::{
-    server::{AllowAnyAnonymousOrAuthenticatedClient, AllowAnyAuthenticatedClient, NoClientAuth},
-    Certificate, Error as TlsError, PrivateKey, RootCertStore, ServerConfig,
+    client::VerifierBuilderError,
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer},
+    server::WebPkiClientVerifier,
+    Error as TlsError, RootCertStore, ServerConfig,
 };
 
 /// Represents errors that can occur building the TlsConfig
@@ -33,6 +35,8 @@ pub(crate) enum TlsConfigError {
     EmptyKey,
     /// An error from an invalid key
     InvalidKey(TlsError),
+    /// An error building the TLS config
+    ConfigBuilder(VerifierBuilderError),
 }
 
 impl fmt::Display for TlsConfigError {
@@ -44,6 +48,7 @@ impl fmt::Display for TlsConfigError {
             TlsConfigError::RsaParseError => write!(f, "rsa parse error"),
             TlsConfigError::EmptyKey => write!(f, "key contains no private key"),
             TlsConfigError::InvalidKey(err) => write!(f, "key contains an invalid key, {}", err),
+            TlsConfigError::ConfigBuilder(err) => write!(f, "couldn't build tls config, {}", err),
         }
     }
 }
@@ -187,7 +192,7 @@ impl TlsConfigBuilder {
         let cert = rustls_pemfile::certs(&mut cert_rdr)
             .map_err(|_e| TlsConfigError::CertParseError)?
             .into_iter()
-            .map(Certificate)
+            .map(CertificateDer::from)
             .collect();
 
         let key = {
@@ -205,13 +210,13 @@ impl TlsConfigBuilder {
                 .map_err(|_e| TlsConfigError::Pkcs8ParseError)?;
 
             if !pkcs8.is_empty() {
-                PrivateKey(pkcs8.remove(0))
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pkcs8.remove(0)))
             } else {
                 let mut rsa = rustls_pemfile::rsa_private_keys(&mut key_vec.as_slice())
                     .map_err(|_e| TlsConfigError::RsaParseError)?;
 
                 if !rsa.is_empty() {
-                    PrivateKey(rsa.remove(0))
+                    PrivateKeyDer::Pkcs1(PrivatePkcs1KeyDer::from(rsa.remove(0)))
                 } else {
                     return Err(TlsConfigError::EmptyKey);
                 }
@@ -220,36 +225,41 @@ impl TlsConfigBuilder {
 
         fn read_trust_anchor(
             trust_anchor: Box<dyn Read + Send + Sync>,
-        ) -> Result<RootCertStore, TlsConfigError> {
+        ) -> Result<Arc<RootCertStore>, TlsConfigError> {
             let trust_anchors = {
                 let mut reader = BufReader::new(trust_anchor);
-                rustls_pemfile::certs(&mut reader).map_err(TlsConfigError::Io)?
+                rustls_pemfile::certs(&mut reader)
+                    .map(|certs_bytes| certs_bytes.into_iter().map(CertificateDer::from))
+                    .map_err(TlsConfigError::Io)?
             };
 
             let mut store = RootCertStore::empty();
-            let (added, _skipped) = store.add_parsable_certificates(&trust_anchors);
+            let (added, _skipped) = store.add_parsable_certificates(trust_anchors);
             if added == 0 {
                 return Err(TlsConfigError::CertParseError);
             }
 
-            Ok(store)
+            Ok(Arc::new(store))
         }
 
         let client_auth = match self.client_auth {
-            TlsClientAuth::Off => NoClientAuth::boxed(),
+            TlsClientAuth::Off => WebPkiClientVerifier::no_client_auth(),
             TlsClientAuth::Optional(trust_anchor) => {
-                AllowAnyAnonymousOrAuthenticatedClient::new(read_trust_anchor(trust_anchor)?)
-                    .boxed()
+                WebPkiClientVerifier::builder(read_trust_anchor(trust_anchor)?)
+                    .allow_unauthenticated()
+                    .build()
+                    .map_err(TlsConfigError::ConfigBuilder)?
             }
             TlsClientAuth::Required(trust_anchor) => {
-                AllowAnyAuthenticatedClient::new(read_trust_anchor(trust_anchor)?).boxed()
+                WebPkiClientVerifier::builder(read_trust_anchor(trust_anchor)?)
+                    .build()
+                    .map_err(TlsConfigError::ConfigBuilder)?
             }
         };
 
         let mut config = ServerConfig::builder()
-            .with_safe_defaults()
             .with_client_cert_verifier(client_auth)
-            .with_single_cert_with_ocsp_and_sct(cert, key, self.ocsp_resp, Vec::new())
+            .with_single_cert_with_ocsp(cert, key, self.ocsp_resp)
             .map_err(TlsConfigError::InvalidKey)?;
         config.alpn_protocols = alpn_protocols;
         Ok(config)
